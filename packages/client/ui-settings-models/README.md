@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-ui-settings-models` is the Models settings page of the dsh web client: users configure API keys (stored write-only under the profile's credential reference), edit each provider's model list, and hand-declare custom pi-ai routes, with provider rows and one editor card at a time. The page joins the provider directory, the settings document, and the credential descriptions into one shared snapshot, so a row's state stays consistent across all three. It also walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
+`dsh-client-ui-settings-models` is the Models settings page of the dsh web client: users configure API keys (stored write-only under the profile's credential reference), edit each provider's model list, and hand-declare custom pi-ai routes, with provider rows and one editor card at a time. The page joins the provider directory, the settings document, and the credential descriptions into one shared snapshot, so a row's state stays consistent across all three. Its sidebar contribution can also show the current official-DeepSeek account balance. It walks first-run users through two ordered dialogs — a versioned internal-testing notice and the conditional official-DeepSeek credential step.
 
 ## Table of Contents
 
@@ -44,6 +44,10 @@ The add flow is a card carrying the dormant-directory provider select — a bare
 ### First-run dialogs
 
 After the versioned notice step completes, the DeepSeek step projects first-run readiness from the same joined snapshot. ANY provider the user can already reach ends it without rendering; only a user with none is asked for the official DeepSeek key. Configure later completes only this coordinator pass, and an absent adapter, inactive route, failed join, read-only deployment, or unusable capability completes the step without rendering — Models remains the diagnostic surface.
+
+### Sidebar account balance
+
+When the expanded sidebar's official DeepSeek route returns a balance, the footer places a compact **Balance** action above Settings. It queries the Host's `llm/accountBalance` Remote on mount, on focus or visible-tab return, and after settings, credential, topology, or connection invalidations. Clicking the action refreshes it. The rail and any unavailable, failed, or empty result render nothing; the component keeps no credentials or persisted balance state.
 
 ### Extension slots
 

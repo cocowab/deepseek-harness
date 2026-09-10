@@ -4,6 +4,18 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 /** One scripted behavior for the next request the mock server receives. */
 export type Behavior =
   | { kind: 'sse'; events: string[]; delayMs?: number }
+  | {
+    kind: 'balance'
+    body: {
+      is_available: boolean
+      balance_infos: Array<{
+        currency: string
+        total_balance: string
+        granted_balance?: string
+        topped_up_balance?: string
+      }>
+    }
+  }
   | { kind: 'http-error'; status: number; body: string; contentType?: string; headers?: Record<string, string> }
   | { kind: 'close-early'; events: string[] }
 
@@ -15,6 +27,8 @@ export interface MockServer {
   headers: IncomingMessage['headers'][]
   /** Parsed Files API operations, excluded from chat request ordering. */
   fileRequests: Array<{ method: string; path: string; filename?: string; bytes?: number }>
+  /** Account-balance requests, excluded from chat request ordering. */
+  accountBalanceRequests: Array<{ method: string; path: string; headers: IncomingMessage['headers'] }>
   script: Behavior[]
   close(): Promise<void>
 }
@@ -39,6 +53,7 @@ export async function mockServer(script: Behavior[]): Promise<MockServer> {
   const requests: unknown[] = []
   const headers: IncomingMessage['headers'][] = []
   const fileRequests: MockServer['fileRequests'] = []
+  const accountBalanceRequests: MockServer['accountBalanceRequests'] = []
   const files = new Map<string, { id: string; object: 'file'; bytes: number; created_at: number; filename: string; purpose: 'user_data'; expires_at: number }>()
   let nextFile = 1
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
@@ -114,6 +129,17 @@ export async function mockServer(script: Behavior[]): Promise<MockServer> {
           return
         }
 
+        if (url.pathname === '/user/balance' && request.method === 'GET') {
+          accountBalanceRequests.push({ method: request.method, path: url.pathname, headers: request.headers })
+          const behavior = script.shift()
+          if (behavior?.kind !== 'balance') {
+            response.writeHead(500).end('mock expected a balance behavior')
+            return
+          }
+          response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(behavior.body))
+          return
+        }
+
         requests.push(JSON.parse(body.toString('utf8')))
         headers.push(request.headers)
         const behavior = script.shift()
@@ -127,6 +153,10 @@ export async function mockServer(script: Behavior[]): Promise<MockServer> {
             ...behavior.headers,
           })
           response.end(behavior.body)
+          return
+        }
+        if (behavior.kind === 'balance') {
+          response.writeHead(500).end('mock balance behavior received on a chat request')
           return
         }
         response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -154,6 +184,7 @@ export async function mockServer(script: Behavior[]): Promise<MockServer> {
     requests,
     headers,
     fileRequests,
+    accountBalanceRequests,
     script,
     close: () => new Promise(resolve => server.close(() => { resolve() })),
   }

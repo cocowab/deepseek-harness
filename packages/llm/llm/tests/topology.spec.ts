@@ -315,6 +315,46 @@ describe('model discovery registry', () => {
   })
 })
 
+describe('account-balance registry', () => {
+  it('registers one route-owned query, carries cancellation, and withdraws it on disposal', async () => {
+    const ctx = await setup()
+    const query = vi.fn(() => Promise.resolve({
+      isAvailable: true,
+      balances: [{ currency: 'CNY', totalBalance: '12.50' }],
+    }))
+    const dispose = ctx.llm.registerAccountBalanceQuery('deepseek-official', query)
+    const signal = new AbortController().signal
+
+    await expect(ctx.llm.accountBalance('deepseek-official', signal)).resolves.toEqual({
+      isAvailable: true,
+      balances: [{ currency: 'CNY', totalBalance: '12.50' }],
+    })
+    expect(query).toHaveBeenCalledWith(signal)
+    dispose()
+    await expect(ctx.llm.accountBalance('deepseek-official')).rejects.toMatchObject({
+      code: 'NO_ACCOUNT_BALANCE_QUERY',
+    })
+  })
+
+  it('rejects duplicate or empty routes and maps provider failures at the Remote boundary', async () => {
+    const ctx = await setup()
+    ctx.llm.registerAccountBalanceQuery('deepseek-official', () => Promise.reject(new Error('account offline')))
+    expect(() => ctx.llm.registerAccountBalanceQuery('deepseek-official', async () => ({
+      isAvailable: true, balances: [],
+    }))).toThrow(expect.objectContaining({ code: 'DUPLICATE_ACCOUNT_BALANCE_QUERY' }))
+    expect(() => ctx.llm.registerAccountBalanceQuery('', async () => ({
+      isAvailable: true, balances: [],
+    }))).toThrow(expect.objectContaining({ code: 'INVALID_ACCOUNT_BALANCE_QUERY' }))
+
+    await expect(ctx.llm.remoteAccountBalance('deepseek-official', new AbortController().signal))
+      .rejects.toMatchObject({
+        code: 'llm/account-balance-rejected',
+        message: 'account offline',
+        details: { provider: 'deepseek-official' },
+      })
+  })
+})
+
 describe('imageRequestPricing resolution', () => {
   it('resolves the owning adapter declaration and degrades everywhere else to undefined', async () => {
     const ctx = await setup()

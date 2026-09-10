@@ -745,7 +745,7 @@ The [wire reference](../deepseek-llm-api-wire-extensions.md) defines the exact r
 
 ## Service and provider contracts
 
-`LlmAdapter` is the provider contract: subclass, implement `stream()`, and register one adapter instance with `ctx.llm.registerAdapter(providers, adapter)`. `GenerateOptions.provider` selects the registered adapter; `GenerateOptions.model` is passed to that adapter and need not be registered at lifecycle start. Duplicate provider routes fail atomically. Optional `providerRetryPolicy()` is captured per route with normal defaults, while `providerInfo()` and asynchronous `listModels()` feed `LlmRuntime.listProviders()` / `listModels()` with detached selector metadata. That catalog is advisory rather than a request whitelist: the adapter remains authoritative and may accept unlisted model ids. One asynchronous `resolveModel()` query returns exact model identity plus optional correctness-sensitive context capacity, an adapter-configured `defaultMaxTokens`, and ordered model-owned reasoning ids with an optional deployment default; absent fields mean unavailable metadata or provider-owned behavior, not invalid catalog membership. The resolver receives optional cancellation and must settle promptly after abort. `LlmRuntime.resolveModelInfo()` validates and detaches the aggregate. At the final adapter boundary, `resolveCallConfig()` materializes the output default only when `maxTokens` is absent and validates and materializes reasoning, so direct calls cannot bypass either configured behavior; direct dispatch captures one registration before awaiting that resolution. The agent loop instead uses `prepareCall()` to keep the same registration across model resolution, durable header logging, and dispatch, retain detached context metadata from that exact lookup, and report which config fields the adapter defaulted. Adapter lookup happens at the terminal continuation of the `llm/stream` waterfall, so a listener may short-circuit the call or route a mutable one-shot request before lookup. AgentLoop observes a request attempt once the outer waterfall returns a stream handle; that limited boundary does not prove a lazy terminal adapter was constructed or began provider I/O. The `block-start` / `block-end` `index` correlation and the assembler together mean an adapter only has to emit well-formed chunks — block reassembly is not each adapter's problem. [architecture.md](../architecture.md#turn-flow) shows where `ctx.llm.stream()` and the `llm/stream` waterfall sit in one turn.
+`LlmAdapter` is the provider contract: subclass, implement `stream()`, and register one adapter instance with `ctx.llm.registerAdapter(providers, adapter)`. `GenerateOptions.provider` selects the registered adapter; `GenerateOptions.model` is passed to that adapter and need not be registered at lifecycle start. Duplicate provider routes fail atomically. Optional `providerRetryPolicy()` is captured per route with normal defaults, while `providerInfo()` and asynchronous `listModels()` feed `LlmRuntime.listProviders()` / `listModels()` with detached selector metadata. That catalog is advisory rather than a request whitelist: the adapter remains authoritative and may accept unlisted model ids. A provider with an account endpoint can separately call `registerAccountBalanceQuery(provider, query)`; `ctx.llm.accountBalance(provider)` returns decimal-string currency lines from that opt-in query and its Remote wrapper maps all refusal into `llm/account-balance-rejected`. Missing offers reject with `NO_ACCOUNT_BALANCE_QUERY`, so a capability-absent route never impersonates a zero balance. One asynchronous `resolveModel()` query returns exact model identity plus optional correctness-sensitive context capacity, an adapter-configured `defaultMaxTokens`, and ordered model-owned reasoning ids with an optional deployment default; absent fields mean unavailable metadata or provider-owned behavior, not invalid catalog membership. The resolver receives optional cancellation and must settle promptly after abort. `LlmRuntime.resolveModelInfo()` validates and detaches the aggregate. At the final adapter boundary, `resolveCallConfig()` materializes the output default only when `maxTokens` is absent and validates and materializes reasoning, so direct calls cannot bypass either configured behavior; direct dispatch captures one registration before awaiting that resolution. The agent loop instead uses `prepareCall()` to keep the same registration across model resolution, durable header logging, and dispatch, retain detached context metadata from that exact lookup, and report which config fields the adapter defaulted. Adapter lookup happens at the terminal continuation of the `llm/stream` waterfall, so a listener may short-circuit the call or route a mutable one-shot request before lookup. AgentLoop observes a request attempt once the outer waterfall returns a stream handle; that limited boundary does not prove a lazy terminal adapter was constructed or began provider I/O. The `block-start` / `block-end` `index` correlation and the assembler together mean an adapter only has to emit well-formed chunks — block reassembly is not each adapter's problem. [architecture.md](../architecture.md#turn-flow) shows where `ctx.llm.stream()` and the `llm/stream` waterfall sit in one turn.
 
 ```ts type-equiv
 /** One model call whose config and adapter registration were resolved together. */
@@ -953,6 +953,35 @@ async discoverModels( settingsNs: string, request: LlmModelDiscoveryRequest, sig
  * @throws RemoteError with `llm/model-discovery-rejected` when discovery refuses or fails.
  */
 @Remote('discoverModels') async remoteDiscoverModels( settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal, ): Promise<LlmDiscoveredModel[]>
+
+/**
+ * Offer to report an account balance for one provider route. The route is
+ * the key because it is the stable identity configuration surfaces already
+ * know; providers with no account endpoint simply do not register an offer.
+ * The registration is disposed with its fiber.
+ * @param provider - provider route whose account this query serves.
+ * @param query - fetches one current balance and must honor `signal`.
+ * @returns the disposer that withdraws the offer.
+ */
+registerAccountBalanceQuery( provider: string, query: (signal?: AbortSignal) => Promise<LlmAccountBalance>, ): () => void
+
+/**
+ * Query one provider route's current account balance.
+ * @param provider - provider route to inspect.
+ * @param signal - caller cancellation.
+ * @returns the provider's current account balance.
+ * @throws LlmError with `NO_ACCOUNT_BALANCE_QUERY` when the route has no offer.
+ */
+async accountBalance(provider: string, signal?: AbortSignal): Promise<LlmAccountBalance>
+
+/**
+ * Remote adapter for one provider account-balance query.
+ * @param provider - provider route to inspect.
+ * @param signal - caller cancellation supplied by the Remote carrier.
+ * @returns the provider's current account balance.
+ * @throws RemoteError with `llm/account-balance-rejected` when the query refuses or fails.
+ */
+@Remote('accountBalance') async remoteAccountBalance(provider: string, signal: AbortSignal): Promise<LlmAccountBalance>
 
 /**
  * Resolve the retry policy captured when one provider route was registered.

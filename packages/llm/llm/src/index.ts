@@ -12,6 +12,7 @@ import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import type {
   GenerateOptions,
   LlmConfigurableProvider,
+  LlmAccountBalance,
   LlmDiscoveredModel,
   LlmFailure,
   LlmImageRequestPricing,
@@ -337,6 +338,10 @@ export class LlmRuntime extends TypertRemoteService {
     string,
     (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>
   >()
+  private accountBalanceQueries = new Map<
+    string,
+    (signal?: AbortSignal) => Promise<LlmAccountBalance>
+  >()
 
   constructor(ctx: Context) {
     super(ctx, 'llm')
@@ -640,6 +645,70 @@ export class LlmRuntime extends TypertRemoteService {
           settingsNs,
           ...request.baseURL === undefined ? {} : { baseURL: request.baseURL },
         },
+        { cause: error },
+      )
+    }
+  }
+
+  /**
+   * Offer to report an account balance for one provider route. The route is
+   * the key because it is the stable identity configuration surfaces already
+   * know; providers with no account endpoint simply do not register an offer.
+   * The registration is disposed with its fiber.
+   * @param provider - provider route whose account this query serves.
+   * @param query - fetches one current balance and must honor `signal`.
+   * @returns the disposer that withdraws the offer.
+   */
+  registerAccountBalanceQuery(
+    provider: string,
+    query: (signal?: AbortSignal) => Promise<LlmAccountBalance>,
+  ): () => void {
+    const dispose = this.ctx.effect(function* (this: LlmRuntime) {
+      if (provider.length === 0) {
+        throw new LlmError('account-balance query needs a non-empty provider route', 'INVALID_ACCOUNT_BALANCE_QUERY')
+      }
+      if (this.accountBalanceQueries.has(provider)) {
+        throw new LlmError(`account-balance query for "${provider}" is already registered`, 'DUPLICATE_ACCOUNT_BALANCE_QUERY')
+      }
+      this.accountBalanceQueries.set(provider, query)
+      yield () => {
+        this.accountBalanceQueries.delete(provider)
+      }
+    }.bind(this), 'llm.registerAccountBalanceQuery()')
+    return () => void dispose()
+  }
+
+  /**
+   * Query one provider route's current account balance.
+   * @param provider - provider route to inspect.
+   * @param signal - caller cancellation.
+   * @returns the provider's current account balance.
+   * @throws LlmError with `NO_ACCOUNT_BALANCE_QUERY` when the route has no offer.
+   */
+  async accountBalance(provider: string, signal?: AbortSignal): Promise<LlmAccountBalance> {
+    const query = this.accountBalanceQueries.get(provider)
+    if (query === undefined) {
+      throw new LlmError(`no account-balance query is registered for "${provider}"`, 'NO_ACCOUNT_BALANCE_QUERY')
+    }
+    return signal === undefined ? query() : query(signal)
+  }
+
+  /**
+   * Remote adapter for one provider account-balance query.
+   * @param provider - provider route to inspect.
+   * @param signal - caller cancellation supplied by the Remote carrier.
+   * @returns the provider's current account balance.
+   * @throws RemoteError with `llm/account-balance-rejected` when the query refuses or fails.
+   */
+  @Remote('accountBalance')
+  async remoteAccountBalance(provider: string, signal: AbortSignal): Promise<LlmAccountBalance> {
+    try {
+      return await this.accountBalance(provider, signal)
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'llm/account-balance-rejected',
+        error instanceof Error ? error.message : String(error),
+        { provider },
         { cause: error },
       )
     }

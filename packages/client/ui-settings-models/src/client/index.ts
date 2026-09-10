@@ -12,6 +12,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the sidebar shell's footer-action SlotMap merge.
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls the ctx.remote merge and the forwarded-event key face
 // (settings/credentials invalidations ride the allowlist) into this program.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -23,12 +25,16 @@ import { WelcomeNotice } from './WelcomeNotice.tsx'
 import type { WelcomeNoticeInjected } from './WelcomeNotice.tsx'
 import { decodeWelcomeSection, WelcomeNoticeStore } from './welcome-store.ts'
 import { ModelsSettingsStore } from './store.ts'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { createModelsOperations } from './operations.ts'
 import { createSettingsSchemaOperations } from './schema-operations.ts'
 import { en, zh, type ModelsKey } from './locales.ts'
 import { WELCOME_NOTICE_SETTINGS_NAMESPACE } from '../onboarding-copy.ts'
+import { BalanceAction } from './BalanceAction.tsx'
+import type { BalanceActionInjected } from './BalanceAction.tsx'
 
 export type { ModelsSectionInjected, ModelsSectionProps } from './ModelsSection.tsx'
+export type { BalanceActionInjected, BalanceActionProps } from './BalanceAction.tsx'
 export type { ModelsFooterOwnerProps, ProviderCardExtrasOwnerProps } from './slot-contract.ts'
 export type { ModelsKey } from './locales.ts'
 
@@ -41,6 +47,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'settings.models'
+const DEEPSEEK_PROVIDER = 'deepseek-official'
 export type {
   ModelsSettingsState, ProviderDirectoryEntry, ProviderRow,
 } from './store.ts'
@@ -108,6 +115,14 @@ export function apply(ctx: ClientContext): void {
     hooks: { welcome: welcomeController.store },
     t,
   })
+  // The sidebar action has no shared state beyond a monotonic invalidation
+  // revision. Its visible result stays component-local and is discarded on
+  // unmount, while connection facts always come from the next Remote request.
+  const balanceRevision = createSnapshotStore(0)
+  const balanceInjected = (): BalanceActionInjected => ({
+    hooks: { balanceRevision },
+    queryBalance: signal => ctx.remote.llm.accountBalance(DEEPSEEK_PROVIDER, signal),
+  })
 
   // Pushed invalidations converge every open surface without polling. The
   // settingsScope injection makes ui-settings activate first, and remote
@@ -116,11 +131,18 @@ export function apply(ctx: ClientContext): void {
   // follows its settings scope, so it needs no subscription here.
   ctx.effect(() => {
     const refreshModels = (): void => { refreshIfLoaded(controller) }
+    const invalidateBalance = (): void => {
+      balanceRevision.set(balanceRevision.getSnapshot() + 1)
+    }
+    const refreshEverything = (): void => {
+      refreshModels()
+      invalidateBalance()
+    }
     const disposers = [
-      ctx.remote.$on('settings/document-updated', () => { refreshModels() }),
-      ctx.remote.$on('credentials/reference-updated', refreshModels),
-      ctx.remote.$on('llm/adapters-updated', refreshModels),
-      ctx.on('connection/reset', refreshModels),
+      ctx.remote.$on('settings/document-updated', refreshEverything),
+      ctx.remote.$on('credentials/reference-updated', refreshEverything),
+      ctx.remote.$on('llm/adapters-updated', refreshEverything),
+      ctx.on('connection/reset', refreshEverything),
     ]
     return () => {
       welcomeController.dispose()
@@ -139,6 +161,13 @@ export function apply(ctx: ClientContext): void {
       'settings.models.footer': { kind: 'list', scope: 'root' },
     },
   }, ModelsSection))
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action',
+    id: 'deepseek-account-balance',
+    order: 100,
+    locale: 'settings.models',
+    inject: balanceInjected,
+  }, BalanceAction))
   ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
     name: 'settings.onboarding',
     id: 'welcome-notice',

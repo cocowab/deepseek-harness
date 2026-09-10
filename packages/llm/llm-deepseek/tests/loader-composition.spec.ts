@@ -141,6 +141,28 @@ async function loadComposition(
 }
 
 describe('llm-deepseek real dynamic composition', () => {
+  it('uses the current route endpoint and credential for the registered account-balance query', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'entry-key')
+    const server = await mockServer([{
+      kind: 'balance',
+      body: {
+        is_available: true,
+        balance_infos: [{ currency: 'CNY', total_balance: '42.00', granted_balance: '2.00' }],
+      },
+    }])
+    const { ctx } = await loadComposition({ withDynamic: false, baseURL: server.url })
+
+    await expect(ctx.llm.accountBalance('deepseek-official')).resolves.toEqual({
+      isAvailable: true,
+      balances: [{ currency: 'CNY', totalBalance: '42.00', grantedBalance: '2.00' }],
+    })
+    expect(server.accountBalanceRequests).toEqual([{
+      method: 'GET',
+      path: '/user/balance',
+      headers: expect.objectContaining({ authorization: 'Bearer entry-key' }),
+    }])
+  })
+
   it('keeps session upload off and package inventory on by default in the real Loader composition', async () => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'entry-key')
     const server = await mockServer([{ kind: 'sse', events: textEvents }])

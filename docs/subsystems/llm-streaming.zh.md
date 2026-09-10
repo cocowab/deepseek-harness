@@ -751,7 +751,7 @@ interface LlmCallConfigAdapterDefaults {
 
 ## 服务与提供方约定
 
-`LlmAdapter` 是提供方约定：创建子类、实现 `stream()`，再用 `ctx.llm.registerAdapter(providers, adapter)` 注册一个适配器实例。`GenerateOptions.provider` 选择已注册适配器；`GenerateOptions.model` 会传给该适配器，无需在生命周期启动时注册。重复提供方路由会原子失败。可选的 `providerRetryPolicy()` 会按路由捕获并填入 normal 默认值，`providerInfo()` 与异步 `listModels()` 方法则为 `LlmRuntime.listProviders()` / `listModels()` 提供分离的 selector 元数据。该目录仅供参考，不是请求白名单：适配器仍是权威，并可接受未列出的模型 id。单次异步 `resolveModel()` 查询返回确切模型身份，以及可选的对正确性敏感的上下文容量、适配器配置的 `defaultMaxTokens`、由模型持有的有序推理强度 ID 和可选的部署默认值；字段缺失表示元数据不可用或保留提供方持有的行为，而不表示目录成员关系无效。解析器会接收可选的取消信号，并且必须在信号中止后迅速完成结算。`LlmRuntime.resolveModelInfo()` 会校验聚合结果并返回分离值。在最终适配器边界，`resolveCallConfig()` 仅在 `maxTokens` 缺失时填入输出默认值，并校验和填入推理强度，因此直接调用也无法绕过任何一项已配置行为；直接分派会在等待解析前捕获一项适配器注册。agent loop 则使用 `prepareCall()`，使模型解析、请求头持久记录和分派全程使用同一项注册，保留来自同一次查询的分离上下文元数据，并报告适配器填入的配置字段。适配器查找发生在 `llm/stream` waterfall 的终端 continuation，因此 listener 可以在查找前短路调用，或路由一个可变的一次性请求。AgentLoop 在外层 waterfall 返回流句柄时观察到一次请求尝试；这个有限边界不能证明惰性终端适配器已构造完成或开始提供方 I/O。`block-start` / `block-end` 的 `index` 关联与 assembler 共同意味着适配器只需 emit 格式正确的分片——块重组不是每个适配器各自的问题。`ctx.llm.stream()` 与 `llm/stream` waterfall 在一个轮次中的位置见 [architecture.md](../architecture.zh.md#turn-flow)。
+`LlmAdapter` 是提供方约定：创建子类、实现 `stream()`，再用 `ctx.llm.registerAdapter(providers, adapter)` 注册一个适配器实例。`GenerateOptions.provider` 选择已注册适配器；`GenerateOptions.model` 会传给该适配器，无需在生命周期启动时注册。重复提供方路由会原子失败。可选的 `providerRetryPolicy()` 会按路由捕获并填入 normal 默认值，`providerInfo()` 与异步 `listModels()` 方法则为 `LlmRuntime.listProviders()` / `listModels()` 提供分离的 selector 元数据。该目录仅供参考，不是请求白名单：适配器仍是权威，并可接受未列出的模型 id。拥有账户端点的提供方可另行调用 `registerAccountBalanceQuery(provider, query)`；`ctx.llm.accountBalance(provider)` 从这项 opt-in 查询返回保留为十进制字符串的各币种余额行，其 Remote 包装层把所有拒绝映射为 `llm/account-balance-rejected`。缺少 offer 时会以 `NO_ACCOUNT_BALANCE_QUERY` 拒绝，因此没有该能力的路由绝不会伪装成零余额。单次异步 `resolveModel()` 查询返回确切模型身份，以及可选的对正确性敏感的上下文容量、适配器配置的 `defaultMaxTokens`、由模型持有的有序推理强度 ID 和可选的部署默认值；字段缺失表示元数据不可用或保留提供方持有的行为，而不表示目录成员关系无效。解析器会接收可选的取消信号，并且必须在信号中止后迅速完成结算。`LlmRuntime.resolveModelInfo()` 会校验聚合结果并返回分离值。在最终适配器边界，`resolveCallConfig()` 仅在 `maxTokens` 缺失时填入输出默认值，并校验和填入推理强度，因此直接调用也无法绕过任何一项已配置行为；直接分派会在等待解析前捕获一项适配器注册。agent loop 则使用 `prepareCall()`，使模型解析、请求头持久记录和分派全程使用同一项注册，保留来自同一次查询的分离上下文元数据，并报告适配器填入的配置字段。适配器查找发生在 `llm/stream` waterfall 的终端 continuation，因此 listener 可以在查找前短路调用，或路由一个可变的一次性请求。AgentLoop 在外层 waterfall 返回流句柄时观察到一次请求尝试；这个有限边界不能证明惰性终端适配器已构造完成或开始提供方 I/O。`block-start` / `block-end` 的 `index` 关联与 assembler 共同意味着适配器只需 emit 格式正确的分片——块重组不是每个适配器各自的问题。`ctx.llm.stream()` 与 `llm/stream` waterfall 在一个轮次中的位置见 [architecture.md](../architecture.zh.md#turn-flow)。
 
 ```ts type-equiv
 /** One model call whose config and adapter registration were resolved together. */
@@ -959,6 +959,35 @@ async discoverModels( settingsNs: string, request: LlmModelDiscoveryRequest, sig
  * @throws RemoteError with `llm/model-discovery-rejected` when discovery refuses or fails.
  */
 @Remote('discoverModels') async remoteDiscoverModels( settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal, ): Promise<LlmDiscoveredModel[]>
+
+/**
+ * Offer to report an account balance for one provider route. The route is
+ * the key because it is the stable identity configuration surfaces already
+ * know; providers with no account endpoint simply do not register an offer.
+ * The registration is disposed with its fiber.
+ * @param provider - provider route whose account this query serves.
+ * @param query - fetches one current balance and must honor `signal`.
+ * @returns the disposer that withdraws the offer.
+ */
+registerAccountBalanceQuery( provider: string, query: (signal?: AbortSignal) => Promise<LlmAccountBalance>, ): () => void
+
+/**
+ * Query one provider route's current account balance.
+ * @param provider - provider route to inspect.
+ * @param signal - caller cancellation.
+ * @returns the provider's current account balance.
+ * @throws LlmError with `NO_ACCOUNT_BALANCE_QUERY` when the route has no offer.
+ */
+async accountBalance(provider: string, signal?: AbortSignal): Promise<LlmAccountBalance>
+
+/**
+ * Remote adapter for one provider account-balance query.
+ * @param provider - provider route to inspect.
+ * @param signal - caller cancellation supplied by the Remote carrier.
+ * @returns the provider's current account balance.
+ * @throws RemoteError with `llm/account-balance-rejected` when the query refuses or fails.
+ */
+@Remote('accountBalance') async remoteAccountBalance(provider: string, signal: AbortSignal): Promise<LlmAccountBalance>
 
 /**
  * Resolve the retry policy captured when one provider route was registered.

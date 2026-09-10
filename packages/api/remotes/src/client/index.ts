@@ -17,6 +17,7 @@ import sessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import workspaceRemote from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import workspaceFilesRemote from '@deepseek-ai/dsh-api-workspace-files/remote'
 import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
+import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 
 export type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 export type { PluginInventorySnapshot } from '@deepseek-ai/dsh-host-plugin-inventory/types'
@@ -115,6 +116,7 @@ export type {
 } from '@deepseek-ai/dsh-settings/types'
 // Provider registry and discovery vocabulary for the llm namespace.
 export type {
+  LlmAccountBalance, LlmAccountBalanceLine,
   LlmConfigurableProvider, LlmDiscoveredModel,
   LlmModelDiscoveryRequest, LlmProviderInfo,
 } from '@deepseek-ai/dsh-llm/types'
@@ -150,11 +152,12 @@ export const inject = ['remote']
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposers: Array<() => Promise<void>> = []
   try {
-    for (const contribution of [
+    const contributions: readonly TypertRemoteContribution[] = [
       agentPresetsRemote, commandsRemote, settingsControllerRemote, goalsRemote, llmRemote, dynamicRemote,
       pluginInventoryRemote, messageFeedbackRemote, sessionFeedbackRemote, fileUploadsRemote, sessionReferencesRemote,
       subagentsRemote, sessionRemote, workspaceRemote, workspaceFilesRemote,
-    ]) {
+    ]
+    for (const contribution of contributions) {
       disposers.push(await ctx.remote.$mount(contribution))
     }
   } catch (error) {

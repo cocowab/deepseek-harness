@@ -13,6 +13,7 @@ import {
 import { ModelsSection } from '../src/client/ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from '../src/client/DeepSeekOnboardingDialog.tsx'
 import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
+import { BalanceAction } from '../src/client/BalanceAction.tsx'
 import { apply as hostApply } from '../src/index.ts'
 
 // These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
@@ -35,6 +36,7 @@ async function bench(isLoopback = true, settings?: object, services: object = {}
       listProviders: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
       listConfigurableProviders: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
       discoverModels: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+      accountBalance: vi.fn(() => Promise.resolve({ ok: true, value: { isAvailable: true, balances: [] } })),
       ...services,
     },
     // Without a settings face the mirror's reads fail and stay contained; the
@@ -55,6 +57,7 @@ function declare(slots: SlotRegistry): () => void {
       children: {
         'settings.section': { kind: 'list', scope: 'root' },
         'settings.onboarding': { kind: 'list', scope: 'root' },
+        'sidebar.footer.action': { kind: 'list', scope: 'root' },
       },
     } as never,
     () => null,
@@ -83,6 +86,14 @@ describe('ui-settings-models apply', () => {
     // The section claims its two extension seats in the same registration.
     expect(before.slots.spec('settings.models.provider-card')).toMatchObject({ kind: 'keyed', scope: 'root' })
     expect(before.slots.spec('settings.models.footer')).toMatchObject({ kind: 'list', scope: 'root' })
+    const balance = before.slots.entries('sidebar.footer.action').find(entry => entry.options.id === 'deepseek-account-balance')!
+    expect(balance.component).toBe(BalanceAction)
+    const balanceInjected = balance.inject as unknown as () => import('../src/client/BalanceAction.tsx').BalanceActionInjected
+    expect(balanceInjected().hooks.balanceRevision.getSnapshot()).toBe(0)
+    await balanceInjected().queryBalance()
+    expect((before.remote as unknown as {
+      llm: { accountBalance: (...args: unknown[]) => Promise<unknown> }
+    }).llm.accountBalance).toHaveBeenCalledWith('deepseek-official', undefined)
     // The nav label is a locale-following thunk; owners resolve at read time.
     expect(resolveSlotLabel(entry.options.label)).toBe('模型')
     const injected = (entry.inject as unknown as () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected)()
@@ -114,6 +125,7 @@ describe('ui-settings-models apply', () => {
     await Promise.resolve()
     expect(after.slots.entries('settings.section')[0]!.component).toBe(ModelsSection)
     expect(after.slots.entries('settings.onboarding')).toHaveLength(2)
+    expect(after.slots.entries('sidebar.footer.action')).toHaveLength(1)
     // The self-inflicted ledger notifications hit the duplicate guard.
     expect(after.slots.entries('settings.section')).toHaveLength(1)
   })

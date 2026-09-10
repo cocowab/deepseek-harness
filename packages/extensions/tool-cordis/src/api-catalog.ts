@@ -1248,6 +1248,26 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['RemoteError with `llm/model-discovery-rejected` when discovery refuses or fails.'],
       },
       {
+        signature: 'registerAccountBalanceQuery( provider: string, query: (signal?: AbortSignal) => Promise<LlmAccountBalance>, ): () => void',
+        description: 'Offer to report an account balance for one provider route. The route is the key because it is the stable identity configuration surfaces already know; providers with no account endpoint simply do not register an offer. The registration is disposed with its fiber.',
+        parameters: [{ name: 'provider', description: 'provider route whose account this query serves.' }, { name: 'query', description: 'fetches one current balance and must honor `signal`.' }],
+        returns: 'the disposer that withdraws the offer.',
+      },
+      {
+        signature: 'async accountBalance(provider: string, signal?: AbortSignal): Promise<LlmAccountBalance>',
+        description: 'Query one provider route\'s current account balance.',
+        parameters: [{ name: 'provider', description: 'provider route to inspect.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the provider\'s current account balance.',
+        throws: ['LlmError with `NO_ACCOUNT_BALANCE_QUERY` when the route has no offer.'],
+      },
+      {
+        signature: '@Remote(\'accountBalance\') async remoteAccountBalance(provider: string, signal: AbortSignal): Promise<LlmAccountBalance>',
+        description: 'Remote adapter for one provider account-balance query.',
+        parameters: [{ name: 'provider', description: 'provider route to inspect.' }, { name: 'signal', description: 'caller cancellation supplied by the Remote carrier.' }],
+        returns: 'the provider\'s current account balance.',
+        throws: ['RemoteError with `llm/account-balance-rejected` when the query refuses or fails.'],
+      },
+      {
         signature: 'providerRetryPolicy(provider: string): ResolvedRetryPolicy',
         description: 'Resolve the retry policy captured when one provider route was registered.',
         parameters: [{ name: 'provider', description: 'registered provider route to inspect.' }],
@@ -4495,6 +4515,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
   },
   {
+    name: 'LlmAccountBalance',
+    declaration: 'export interface LlmAccountBalance {\n    isAvailable: boolean;\n    balances: readonly LlmAccountBalanceLine[];\n}',
+  },
+  {
+    name: 'LlmAccountBalanceLine',
+    declaration: 'export interface LlmAccountBalanceLine {\n    currency: string;\n    totalBalance: string;\n    grantedBalance?: string;\n    toppedUpBalance?: string;\n}',
+  },
+  {
     name: 'LlmAdapter',
     declaration: 'export abstract class LlmAdapter {\n    providerInfo(provider: string): LlmProviderInfo;\n    providerRetryPolicy(_provider: string): ResolvedRetryPolicy | undefined;\n    imageRequestPricing(_provider: string, _model: string): LlmImageRequestPricing | undefined;\n    listModels(_provider: string): Promise<readonly LlmModelInfo[]>;\n    resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;\n    abstract stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
@@ -4560,7 +4588,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmRuntime',
-    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions) /* …truncated — full shape in source */',
+    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    registerAccountBalanceQuery(provider: string, query: (signal?: AbortSignal) => Promise<LlmAccountBalance>): () => void;\n    async accountBalance(provider: string, signal?: AbortSignal): Promise<LlmAccountBalance>;\n    @Remote(\'accountBalance\')\n    async remoteAccountBalance(provider: string, signal: AbortSignal): Promise<LlmAccountBalance>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo /* …truncated — full shape in source */',
   },
   {
     name: 'LspHover',

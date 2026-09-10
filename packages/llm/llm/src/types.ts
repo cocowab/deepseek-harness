@@ -200,6 +200,33 @@ export interface LlmProviderInfo {
   name: string
 }
 
+/**
+ * One currency line from a provider account-balance response. Amounts stay
+ * decimal strings so they never pass through a rounding binary float before
+ * a consumer formats them.
+ */
+export interface LlmAccountBalanceLine {
+  /** ISO currency code reported by the provider (for example `CNY` or `USD`). */
+  currency: string
+  /** Total remaining balance in the provider's decimal representation. */
+  totalBalance: string
+  /** Granted or promotional balance, when the provider separates it. */
+  grantedBalance?: string
+  /** User-topped-up balance, when the provider separates it. */
+  toppedUpBalance?: string
+}
+
+/**
+ * Provider-neutral account-balance answer. Providers without a balance
+ * endpoint do not register a query, rather than returning a synthetic zero.
+ */
+export interface LlmAccountBalance {
+  /** Whether the provider says the account is currently usable. */
+  isAvailable: boolean
+  /** One or more currency lines in provider response order. */
+  balances: readonly LlmAccountBalanceLine[]
+}
+
 /** Merge-extensible provider model modality vocabulary. */
 export interface ModelModalityMap {
   text: 'text'
@@ -277,6 +304,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'llm/model-discovery-rejected': {
       readonly settingsNs: string
       readonly baseURL?: string
+    }
+    /** An account-balance provider query refused or failed. */
+    'llm/account-balance-rejected': {
+      readonly provider: string
     }
   }
 }
